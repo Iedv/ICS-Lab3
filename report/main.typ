@@ -114,3 +114,55 @@ fish: Job 1, './dark-calc' terminated by signal SIGSEGV (Address boundary error)
 
 = TASK IV: 用 GDB 检查 main 函数的机器码
 
+```
+0x401ac3 <main>:        0x55    0x48    0x89    0xe5    0xb8    0x00    0x00    0x00
+0x401acb <main+8>:      0x00    0xe8    0xa6    0xfe    0xff    0xff    0xb8    0x00
+0x401ad3 <main+16>:     0x00    0x00    0x00    0xe8    0xfc    0xfe    0xff    0xff
+0x401adb <main+24>:     0xeb    0xea    0x55    0x48    0x89    0xe5    0x48    0x83
+```
+
+*Question*: 前三行汇编对应的机器码分别是什么？
+
+*Answer*: 
+
+1. `push   rbp` 对应 `0x55`；
+2. `mov    rbp,rsp` 对应 `0x48 0x89 0xe5`；
+3. `mov    eax,0x0` 对应 `0xb8 0x00 0x00 0x00 0x00`。
+
+*Question*: 这些机器码在内存中排列的方式是什么样的？请你用文字或画一个图来说明。需要指出这三行指令分别对应的内存区间是什么。你可以在第一行指令处下一个断点，然后逐条指令执行，同时观察 rip 寄存器的值。
+
+*Answer*: 
+
+内存中 `push rbp` 占用 1 Byte，地址为 `0x401ac3` ~ `0x401ac3`；
+内存中 `mov rbp,rsp` 占用 3 Byte，地址为 `0x401ac4` ~ `0x401ac6`；
+内存中 `mov eax,0x0` 占用 5 Byte，地址为 `0x401ac7` ~ `0x401acb`；
+
+在内存中，这些指令的长度是不一样的。
+
+= TASK V: 任务：栈空间执行
+
+让 input 的 ret 跳转到栈上，然后调用 `grade_eval(4)`。具体转成汇编就是：
+
+1. `mov rdi,0x4`
+2. `mov rax,[address to grade_eval]`
+3. `call rax`
+
+由于栈上地址超过 32 位整数范围，所以直接使用偏移量的 call 似乎无法实现，需要借助一个寄存器实现。
+
+= TASK VI: 任务：ROP
+
+最终希望使 rdi 为 4。
+
+注意到，`0x401a33` 开始的机器码是 `0x5f 0x3c`，直接对应 `pop rdi; ret;`，所以直接利用这一条。并通过把这个地址更高位（调用这个 gadget 后的栈顶）的栈写为 4，即可让 `pop rdi` 直接赋值 `rdi` 为 4。最后直接调用 grade_eval，即 `0x401978`。
+
+= TASK VII: 任务：Canary
+
+主要思路是借助 `memcopy` 实现直接对 ret 的地址修改，然后通过 rop 劫持控制流。
+
+`memcopy` 的目的地可以被 `f.len` 控制，所以我们设计好 expression 为 rop 地址和数据，然后再修改 `f.log`，把 expression 的地址恰好移动到指定位置。
+
+*局部变量重新排布*
+
+一方面，如果前面的 `len`，`expression` 这些都是局部变量，重新排序，那么攻击者就不能确定 `len` 相对于 `expression` 的位置，就不可能通过精心构造输入，使得 buffer overflow 正好修改 `len`。
+
+另一方面，也可以考虑在局部变量的存储和 ret 地址以及 canary 之间增加一个随机长度的 padding，防止精细调整 buffer overflow 的偏移量正好修改 ret 的地址。
