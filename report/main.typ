@@ -110,7 +110,11 @@ fish: Job 1, './dark-calc' terminated by signal SIGSEGV (Address boundary error)
 
 接下来尝试利用 buffer overflow 攻击。
 
-我们希望跳转到外部程序 malware，因此必需借助 system() 函数。而 system 函数调用的 `command_buf` 在退出 input 之前被赋值为了我们输入的 expression，这恰好可以让我们把 expression 改为 `./malware`，并且让溢出的数据改写 ret 的下一行代码为 system() 函数。而
+我们希望跳转到外部程序 malware，因此必需借助 system() 函数。而 system 函数调用的 `command_buf` 在退出 input 之前被赋值为了我们输入的 expression，这恰好可以让我们把 command_buf 改为 `./malware`，并且让溢出的数据改写返回地址为 eval 中调用 system() 的位置。
+
+具体来说，input 的栈帧中 expression 只有 16 字节，gets 没有做长度检查，超出的部分会依次覆盖保存的 rbp 和返回地址。于是我们构造 payload：前 16 字节写 `./malware #12345` 填满缓冲区，紧接着 8 字节覆盖保存的 rbp（内容无所谓），最后 8 字节把返回地址改写为 `0x401a70`，也就是 eval 中 `call system` 那一条指令。
+
+这样做的原因是：input 在退出前会执行 `strcpy(command_buf, expression)`，把输入复制到全局 command_buf，而 strcpy 在第一个 `\0` 处停止，所以 command_buf 里存放的就是 `./malware #12345`（后面溢出的不可打印字节由 `#` 注释掉）。程序返回后不再经过 eval 前面拼接 `echo $((` 的部分，直接调用 system(command_buf)，就等价于运行同一目录下的 `./malware`。
 
 = TASK IV: 用 GDB 检查 main 函数的机器码
 
@@ -153,7 +157,7 @@ fish: Job 1, './dark-calc' terminated by signal SIGSEGV (Address boundary error)
 
 最终希望使 rdi 为 4。
 
-注意到，`0x401a33` 开始的机器码是 `0x5f 0x3c`，直接对应 `pop rdi; ret;`，所以直接利用这一条。并通过把这个地址更高位（调用这个 gadget 后的栈顶）的栈写为 4，即可让 `pop rdi` 直接赋值 `rdi` 为 4。最后直接调用 grade_eval，即 `0x401978`。
+注意到，`0x401a33` 开始的机器码是 `0x5f 0xc3`，直接对应 `pop rdi; ret;`，所以直接利用这一条。并通过把这个地址更高位（调用这个 gadget 后的栈顶）的栈写为 4，即可让 `pop rdi` 直接赋值 `rdi` 为 4。最后直接调用 grade_eval，即 `0x401978`。
 
 = TASK VII: 任务：Canary
 
